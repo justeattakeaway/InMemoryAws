@@ -1,4 +1,5 @@
 using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.DataModel;
 using Amazon.DynamoDBv2.Model;
 using Amazon.EventBridge.Model;
 using Amazon.S3.Model;
@@ -173,6 +174,66 @@ public sealed class BringYourOwnSdkTests
         var records = await streams.GetRecordsAsync(new StreamsModel.GetRecordsRequest { ShardIterator = iterator });
 
         records.Records.ShouldHaveSingleItem().Dynamodb.NewImage["pk"].S.ShouldBe("a");
+    }
+
+    /// <summary>
+    /// AWS SDK v3's Document Model describes the table synchronously, even inside an async call, so on .NET this
+    /// goes through the handler's synchronous <c>Send</c>; and it caches the description under the client's access
+    /// key, so each client needs one of its own, or the second cloud would get the first cloud's table.
+    /// </summary>
+    [Test]
+    public async Task DynamoDbContextSavesAndLoadsAnItem()
+    {
+        using var dynamoDb = new InMemoryAwsCloud().CreateDynamoDbClient();
+        await CreateOrdersTable(dynamoDb, "Id");
+        using var context = CreateContext(dynamoDb);
+
+        await context.SaveAsync(new Order { Id = "1", Total = 12 });
+
+        (await context.LoadAsync<Order>("1")).Total.ShouldBe(12);
+
+        // Another cloud's table of the same name, keyed differently.
+        using var otherDynamoDb = new InMemoryAwsCloud().CreateDynamoDbClient();
+        await CreateOrdersTable(otherDynamoDb, "Code");
+        using var otherContext = CreateContext(otherDynamoDb);
+
+        await otherContext.SaveAsync(new CodedOrder { Code = "1", Total = 7 });
+
+        (await otherContext.LoadAsync<CodedOrder>("1")).Total.ShouldBe(7);
+    }
+
+    private static DynamoDBContext CreateContext(AmazonDynamoDBClient dynamoDb) =>
+#if AWS_SDK_V3
+        new(dynamoDb);
+#else
+        new DynamoDBContextBuilder().WithDynamoDBClient(() => dynamoDb).Build();
+#endif
+
+    private static Task<CreateTableResponse> CreateOrdersTable(AmazonDynamoDBClient dynamoDb, string hashKey) =>
+        dynamoDb.CreateTableAsync(new CreateTableRequest
+        {
+            TableName = "Orders",
+            KeySchema = [new KeySchemaElement(hashKey, KeyType.HASH)],
+            AttributeDefinitions = [new AttributeDefinition(hashKey, ScalarAttributeType.S)],
+            BillingMode = BillingMode.PAY_PER_REQUEST,
+        });
+
+    [DynamoDBTable("Orders")]
+    public sealed class Order
+    {
+        [DynamoDBHashKey]
+        public string Id { get; set; } = "";
+
+        public int Total { get; set; }
+    }
+
+    [DynamoDBTable("Orders")]
+    public sealed class CodedOrder
+    {
+        [DynamoDBHashKey]
+        public string Code { get; set; } = "";
+
+        public int Total { get; set; }
     }
 
 #if !NETFRAMEWORK

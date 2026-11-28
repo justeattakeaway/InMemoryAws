@@ -40,7 +40,23 @@ namespace InMemoryAws
         /// <exception cref="ArgumentException"><paramref name="region"/> isn't a region name.</exception>
         public static AmazonDynamoDBClient CreateDynamoDbClient(this InMemoryAwsCloud cloud, string region, Action<AmazonDynamoDBConfig> configure = null)
         {
-            return new AmazonDynamoDBClient(new AnonymousAWSCredentials(), ConfigureForCloud(cloud, new AmazonDynamoDBConfig(), AwsServiceType.DynamoDb, region, configure));
+            return new AmazonDynamoDBClient(new DynamoDbClientCredentials(), ConfigureForCloud(cloud, new AmazonDynamoDBConfig(), AwsServiceType.DynamoDb, region, configure));
+        }
+
+        /// <summary>
+        /// Anonymous credentials (the client signs nothing) that still answer an access key, one of their own.
+        /// AWS SDK v3's Document Model, under <c>DynamoDBContext</c>, caches table descriptions under the client's
+        /// access key and endpoint, which plain anonymous credentials refuse to give; and a shared key would hand one
+        /// cloud's table schema to a client of another cloud at the same endpoint.
+        /// </summary>
+        private sealed class DynamoDbClientCredentials : AnonymousAWSCredentials
+        {
+            private readonly ImmutableCredentials _credentials = new ImmutableCredentials(Guid.NewGuid().ToString("N"), "unused", null);
+
+            public override ImmutableCredentials GetCredentials()
+            {
+                return _credentials;
+            }
         }
     }
 }

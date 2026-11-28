@@ -67,6 +67,17 @@ public sealed class InMemoryAwsHttpMessageHandler : DelegatingHandler
         return await SendEventBridgeAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
+#if NET5_0_OR_GREATER
+    /// <summary>
+    /// Serves a synchronous <see cref="HttpClient.Send(HttpRequestMessage)"/>, which AWS SDK v3 makes on .NET
+    /// (its Document Model describes a table synchronously, even inside <c>DynamoDBContext.SaveAsync</c>).
+    /// Without this, <see cref="DelegatingHandler"/> would pass it to an inner handler there isn't.
+    /// </summary>
+    protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        // Every await on the way uses ConfigureAwait(false), so no continuation waits for a context this blocks.
+        SendAsync(request, cancellationToken).GetAwaiter().GetResult();
+#endif
+
     /// <summary>Serves an EventBridge request through <see cref="EventBridgeWireProtocol"/>.</summary>
     private async Task<HttpResponseMessage> SendEventBridgeAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
